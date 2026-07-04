@@ -1,0 +1,6 @@
+\#*
+.\#*
+.direnv
+.lake
+.cache
+/.lake
