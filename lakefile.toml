@@ -8,3 +8,18 @@ name = "Garfield"
 [[lean_exe]]
 name = "garfield"
 root = "Main"
+
+[[require]]
+name = "Algolean"
+scope = "Shreyas4991"
+rev = "v4.30.0"
+
+[[require]]
+name = "Cslib"
+scope = "leanprover"
+rev = "v4.30.0"
+
+[[require]]
+name = "Mathlib"
+scope = "leanprover-community"
+rev = "v4.30.0"
