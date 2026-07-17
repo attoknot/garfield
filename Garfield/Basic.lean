@@ -69,6 +69,7 @@ def isCycle {a : α} (w : Walk g a a) : Bool :=
 
 end Walk
 
+@[ext]
 structure Path {α} (g : Graph α) (a b : α) where
   walk : Walk g a b
   is_path : walk.isPath
@@ -132,7 +133,9 @@ theorem isConnected_of_isUndirected [LinearOrder α]
   · rcases h b a (by lia) with ⟨ walk ⟩
     use reverse_walk g (h_undirected := h_undirected) walk
 
-def isAcyclic := ∀ (a : α) (w : Walk g a a), !w.isCycle
+def isDirectedAcyclic : Prop := ∀ (a : α) (w : Walk g a a), !w.isCycle
+
+def isUndirectedAcyclic : Prop := ∀ (a b : α), Path g a b → Edge g b a → False
 
 def Coloring (k : ℕ) (color : α → Fin k) : Prop :=
   ∀ a b : α, Edge g a b → color a ≠ color b
@@ -190,7 +193,58 @@ def Shortest {a b : α} (w : Walk g a b) := ∀ w' : Walk g a b, w.vertices.leng
 
 def Distance (a b : α) (n : ℕ) := ∃ w : Walk g a b, w.vertices.length = n ∧ Shortest g w
 
+def isTree : Prop := g.isSimple ∧ g.isUndirected ∧ g.isUndirectedAcyclic ∧ g.isConnected
+
 end Graph
+
+-- very useless
+
+def Graph.union {n m : ℕ} (ga : Graph (Fin n)) (gb : Graph (Fin m)) : Graph (Fin (n + m)) where
+  edges a b := match a, b with
+    | ⟨a, ha⟩, ⟨b, hb⟩ =>
+      if h : a < n ∧ b < n then ga.edges ⟨a, by lia⟩ ⟨b, by lia⟩ else
+      if h : a ≥ n ∧ b ≥ n then gb.edges ⟨a - n, by lia⟩ ⟨b - n, by lia⟩ else
+      0
+
+def Graph.split {n ma mb : ℕ} {h : n = ma + mb} (g : Graph (Fin n)) : (Graph (Fin ma)) × (Graph (Fin mb)) :=
+  ⟨
+  { edges a b := match a, b with
+    | ⟨a, ha⟩, ⟨b, hb⟩ => g.edges ⟨a, by lia⟩ ⟨b, by lia⟩
+  },
+  { edges a b := match a, b with
+    | ⟨a, ha⟩, ⟨b, hb⟩ => g.edges ⟨ma + a, by lia⟩ ⟨ma + b, by lia⟩
+  } ⟩
+
+theorem Graph.split_union {n m : ℕ} (ga : Graph (Fin n)) (gb : Graph (Fin m)) :
+    ⟨ga, gb⟩ = Graph.split (h := by grind) (Graph.union ga gb) := by
+  ext <;> simp [Graph.split, Graph.union]
+  grind
+
+theorem Graph.union_split {n ma mb : ℕ} {h : n = ma + mb} (g : Graph (Fin n))
+    (h_no_intersection : ∀ a b h1 h2, ¬(a < ma ↔ b < ma) → g.edges ⟨a, h1⟩ ⟨b, h2⟩ = 0) :
+    g =
+      let (a, b) := Graph.split (h := h) (ma := ma) (mb := mb) g
+      by rw [h]; exact Graph.union a b := by
+  cases g with | mk edges =>
+  subst h; simp [Graph.split, Graph.union]
+  grind
+
+inductive Tree where
+| Leaf : Tree
+| Node : List Tree → Tree
+
+namespace Tree
+
+def ofGraph {n : ℕ} {h : n > 0} (g : Graph (Fin n)) (visited : Fin n → Bool) : Tree :=
+  match n with
+  | 0 => by contradiction
+  | 1 => Leaf
+  | n + 1 => Node <|
+    List.range n |>.flatMap fun next =>
+      if g.edges ⟨n, sorry⟩ ⟨next, sorry⟩ == 0 then []
+      else sorry
+
+end Tree
 
 section
 
