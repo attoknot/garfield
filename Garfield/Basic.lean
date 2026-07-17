@@ -5,6 +5,8 @@ import Mathlib.Logic.Relation
 import Batteries.Data.Array.Scan
 import Mathlib.Order.Defs.LinearOrder
 import Mathlib.Order.Fin.Basic
+import Mathlib.Algebra.Group.Even
+import Mathlib.Algebra.Group.Nat.Even
 
 instance : AddZero ℕ where
 
@@ -53,11 +55,17 @@ namespace Walk
 
 variable {α : Type} {g : Graph α}
 
+-- important: doesn't include the last vertex. todo: add a new property length and appropriate lemmas
 def vertices {a c : α} (w : Walk g a c) : List α := match w with
 | nil => []
 | cons w edge => Walk.vertices w ++ [c]
 
 def isPath {a c : α} (w : Walk g a c) : Prop := w.vertices.Nodup
+
+def isCycle {a : α} (w : Walk g a a) : Bool :=
+  match w with
+  | .nil => true
+  | _ => false
 
 end Walk
 
@@ -124,6 +132,64 @@ theorem isConnected_of_isUndirected [LinearOrder α]
   · rcases h b a (by lia) with ⟨ walk ⟩
     use reverse_walk g (h_undirected := h_undirected) walk
 
+def isAcyclic := ∀ (a : α) (w : Walk g a a), !w.isCycle
+
+def Coloring (k : ℕ) (color : α → Fin k) : Prop :=
+  ∀ a b : α, Edge g a b → color a ≠ color b
+
+def isBipartite := ∃ color, Coloring g 2 color
+
+theorem isBipartite_isLoopless {color}
+    {h_bipartite : Coloring g 2 color} :
+    g.isLoopless := by
+  dsimp [Coloring, isLoopless] at ⊢ h_bipartite
+  intros a
+  cases h : g.edges a a with
+  | zero => rfl
+  | succ n =>
+    specialize h_bipartite a a ?_ rfl
+    · use 0; lia
+    trivial
+
+theorem isBipartite_walk_parity {a b : α} {color}
+    {h_bipartite : Coloring g 2 color}
+    (w : Walk g a b) :
+    Even w.vertices.length ↔ color a = color b := by
+  suffices ∀ n, w.vertices.length = n → (Even w.vertices.length ↔ color a = color b) by grind
+  dsimp [Coloring] at h_bipartite
+  intros n
+  induction n generalizing a b w with
+  | zero =>
+    cases w
+    · intro h; rw [h]; simp
+    · simp [Walk.vertices]
+  | succ n ih =>
+    cases w with
+    | nil => simp [Walk.vertices]
+    | @cons b' _ w edge  =>
+      simp [Walk.vertices]
+      intros h
+      specialize @ih a b' w h
+      rw [h] at ⊢ ih
+      constructor
+      · show Even (n + 1) → color a = color b
+        intro h_even
+        have : ¬ Even n := Nat.even_add_one.mp h_even
+        have : color a ≠ color b' := by tauto
+        have : color b' ≠ color b := h_bipartite _ _ edge
+        have : ∀ a b c : Fin 2, a ≠ b → b ≠ c → a = c := by lia
+        tauto
+      · show color a = color b → Even (n + 1)
+        intro h_color_eq
+        have : color b' ≠ color b := h_bipartite _ _ edge
+        have : color a ≠ color b' := by grind only
+        have : ¬ Even n := by grind only
+        grind
+
+def Shortest {a b : α} (w : Walk g a b) := ∀ w' : Walk g a b, w.vertices.length ≤ w'.vertices.length
+
+def Distance (a b : α) (n : ℕ) := ∃ w : Walk g a b, w.vertices.length = n ∧ Shortest g w
+
 end Graph
 
 section
@@ -139,5 +205,17 @@ example : g.isConnected := by
     use Walk.cons (b := 0) ?_ ?_
     · use Walk.nil
     · use 0; simp [g]
+
+example : g.Distance 0 1 1 := by
+  dsimp [Graph.Distance, Graph.Shortest]
+  let w : Walk g 0 1 := Walk.cons (b := 0) Walk.nil ⟨0, by simp [g]⟩
+  use w
+  constructor
+  · simp [w, Walk.vertices]
+  intros w'
+  cases w' with
+  | cons w' edge => cases w' with
+    | cons w' edge2 => simp [w, Walk.vertices]
+    | nil => rfl
 
 end
