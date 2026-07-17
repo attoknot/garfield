@@ -3,166 +3,141 @@
 import Cslib.Algorithms.Lean.TimeM
 import Mathlib.Logic.Relation
 import Batteries.Data.Array.Scan
+import Mathlib.Order.Defs.LinearOrder
+import Mathlib.Order.Fin.Basic
 
 instance : AddZero ℕ where
 
-namespace Graph
+structure Graph (α : Type) where
+  -- for now we = wv = Unit
+  -- number of edges between a and b. the signature become clearer when we introduce weights
+  edges : (a b : α) → ℕ
 
-structure Edge (β : Type) where
-  v : Nat
-  w : β
-deriving Repr, Inhabited, BEq
+def Graph.toList {n : Nat} (g : Graph (Fin n)) : List (Fin n × Fin n × Nat) :=
+  let vertices := List.ofFn (fun i : Fin n => i)
+  vertices.flatMap fun u =>
+    vertices.flatMap fun v =>
+      let edgeCount := g.edges u v
+      List.ofFn (fun i : Fin edgeCount => (u, v, i.val))
 
-structure Vertex (α : Type) (β : Type) where
-  payload : α
-  adj : Array (Edge β) := #[]
-deriving Repr, Inhabited, BEq
+instance : Repr (Graph (Fin n)) where
+  reprPrec := reprPrec ∘ Graph.toList
 
-instance {α β} [Inhabited α] : Inhabited (Vertex α β) := ⟨ { payload := default } ⟩
-
-end Graph
-
-structure Graph (α : Type) (β : Type) : Type where
-  vertices : Array (Graph.Vertex α β) := #[]
-deriving Repr, BEq
-
-namespace Graph
-
-variable {α : Type} [Inhabited α] {β : Type}
-
-@[grind]
-def empty : Graph α β := ⟨#[]⟩
+-- todo: remove simp in the future
+@[simp]
+def Graph.empty : Graph (Fin 0) where
+  edges a b := by cases a; lia
 
 @[simp]
-def edgeCount (g : Graph α β) : Nat := g.vertices.foldr (λ vertex count => vertex.adj.size + count) 0
+def Graph.addVertex {n : ℕ} (g : Graph (Fin n)) : Graph (Fin (n.succ)) where
+  edges a b :=
+    if h : a = n ∨ b = n
+    then 0
+    else g.edges ⟨ a.val, by lia ⟩ ⟨ b.val, by lia ⟩
 
 @[simp]
-def vertexCount (g : Graph α β) : Nat := g.vertices.size
+def Graph.addEdge {n : ℕ} (g : Graph (Fin n)) (a b : Fin n) : Graph (Fin n) where
+  edges a' b' :=
+    if _ : a = a' && b = b'
+    then g.edges a' b' + 1
+    else g.edges a' b'
 
-@[grind]
-def addVertex (g : Graph α β) (payload : α) : (Graph α β) × Nat :=
-  let res := { g with vertices := g.vertices.push { payload := payload } }
-  let id := res.vertexCount - 1
-  (res, id)
+def Edge {α} (g : Graph α) (a b : α) : Type :=
+  Fin (g.edges a b)
 
-@[grind]
-def addEdge (g : Graph α β) (from' : Nat) (v : Nat) (w : β) : Graph α β := {
-  g with vertices := g.vertices.modify from' (λ vertex => {
-    vertex with adj := vertex.adj.push { v := v, w := w }
-  } )
-}
-
-variable [BEq α]
-
-def findVertexByPayload (g : Graph α β) (payload_a : α) : Option ℕ := g.vertices.findIdx? (fun x => x.payload == payload_a)
-
-def findEdge (g : Graph α β) (a b : ℕ) : Option ℕ := do
-  let v ← g.vertices[a]?
-  v.adj.findIdx? (fun edge => edge.v == b)
-
-end Graph
-
-structure Walk where
-  start : ℕ
-  edges : Array ℕ
-  end' : ℕ
-deriving Repr
+inductive Walk {α} (g : Graph α) : α → α → Type
+| nil : {a : α} → Walk g a a
+| cons : {a b c : α} → Walk g a b → Edge g b c → Walk g a c
 
 namespace Walk
 
-def getVertices {α β} (w : Walk) (g : Graph α β): Array (Option ℕ) :=
-  Array.scanl (fun cur edge => do (← (← g.vertices[← cur]?).adj[edge]?).v) (some w.start) w.edges
+variable {α : Type} {g : Graph α}
 
-@[simp]
-theorem getVertices_non_empty : Array.size (getVertices w g) > 0 := by simp [getVertices]
+def vertices {a c : α} (w : Walk g a c) : List α := match w with
+| nil => []
+| cons w edge => Walk.vertices w ++ [c]
 
-theorem getVertices_end_invariant {start edges end0} end1 :
-    getVertices ⟨ start, edges, end0 ⟩ g = getVertices ⟨ start, edges, end1 ⟩ g := by
-  simp [getVertices]
+def isPath {a c : α} (w : Walk g a c) : Prop := w.vertices.Nodup
 
-theorem getVertices_push start edges end0 end1 ei (g : Graph α β) :
-    getVertices ⟨ start, edges.push ei, end0 ⟩ g
-      = (getVertices ⟨ start, edges, end1 ⟩ g).push
-          (Array.foldl (fun cur edge => do (← (← g.vertices[← cur]?).adj[edge]?).v) (some start) (edges.push ei)) := by
-  simp only [getVertices, Array.scanl_push, Array.foldl_push]
+end Walk
 
-def valid {α β} (w : Walk) (g : Graph α β) : Bool :=
-  let vertices := w.getVertices g
-  have h : vertices.size > 0 := by simp [vertices, getVertices, Array.size_scanl]
-  vertices.all (·.filter (· < g.vertices.size) |>.isSome)
-    && (vertices.back (h := h) |>.filter (· == w.end') |>.isSome)
+structure Path {α} (g : Graph α) (a b : α) where
+  walk : Walk g a b
+  is_path : walk.isPath
 
-def refl (a : ℕ) : Walk := ⟨ a, #[], a ⟩
+namespace Graph
 
-def leg (a b : ℕ) (ei : ℕ) : Walk where
-  start := a
-  edges := #[ei]
-  end' := b
+variable {α : Type} (g : Graph α)
 
-def trans (w0 w1 : Walk) : Walk where
-  start := w0.start
-  edges := w0.edges ++ w1.edges
-  end' := w1.end'
+-- simple classes
 
-def findEdge {α β} (g : Graph α β) (a b : ℕ) {h : g.findEdge a b |>.isSome} : Walk where
-  start := a
-  edges := match h' : g.findEdge a b with
-    | some ei => #[ei]
-    | none => by rw [h'] at h; trivial
-  end' := b
+def isLoopless : Prop :=
+  ∀ a : α, g.edges a a = 0
 
-theorem _Array_induct {α} (l : Array α) (P : Array α → Prop)
-    (h_nil : P #[])
-    (h_cons : ∀ l a, P l → P (l.push a)) :
-      P l := by sorry
-    
-    
-theorem induct_valid {α β} (w : Walk) (g : Graph α β) (P : Walk → Prop)
-    (h_refl : ∀ a, a < g.vertices.size →
-      P (Walk.refl a))
-    (h_step : ∀ a b ei w,
-      w.valid g →
-      w.start = a →
-      (h_a : a < g.vertices.size) →
-      (h_b : b < g.vertices.size) →
-      (h_ei : ei < g.vertices[a].adj.size) →
-      P (Walk.trans w ⟨ a, #[ei], b ⟩ ))
-    (h_valid : w.valid g) :
-      P w := by
-  rcases w with ⟨ start, edges, end' ⟩
-  revert end' h_valid
-  apply _Array_induct edges
-  · intro end' h_valid
-    simp only [Walk.valid, Walk.getVertices] at h_valid
-    rw! [Array.scanl_eq_singleton_iff (some start) |>.mpr ⟨ rfl, rfl ⟩] at h_valid
-    simp at h_valid
-    rcases h_valid with ⟨ h_start, rfl ⟩
-    apply h_refl _ h_start
-  · intros edges ei ih end' h_valid
-    let end0 := match h : Walk.getVertices ⟨ start, edges , 0 ⟩ g |>.back with
-    | some end0 => end0
-    | none => by
-        simp only [Walk.valid] at h_valid
-        rw! [Walk.getVertices_push (end1 := 0)] at h_valid
-        grind
-    
-    have h_edge_exists : (g.findEdge end0 end').isSome := sorry
-    specialize h_step end0 end' ei ⟨ start, edges, end0 ⟩
-    have h_valid' : Walk.valid ⟨ start, edges, end' ⟩ g := by
-      simp [Walk.valid] at ⊢ h_valid
-      rw! [Walk.getVertices_push (end1 := end')] at h_valid
-      rcases h_valid with ⟨ h_valid, _ ⟩
-      constructor
-      · intros i h_i
-        grind [h_valid i (by grind [Array.size_push])]
-      · sorry
+def isMultiless : Prop :=
+  ∀ a b : α, g.edges a b < 0
 
-    have : Walk.findEdge g end0 end' (h := h_edge_exists) = ⟨ end0, #[ei], end' ⟩ := by
-      simp [Walk.findEdge]
-      rcases (Option.isSome_iff_exists.mp h_edge_exists) with ⟨ ei', h_ei' ⟩
-      rw! [h_ei']; simp
-      sorry
+def isSimple : Prop :=
+  g.isLoopless ∧ g.isMultiless
 
-    rw [←this] at h_step; simp [Walk.trans] at h_step
-    sorry
+def isUndirected : Prop :=
+  ∀ a b : α, g.edges a b = g.edges b a
 
+@[simp, grind]
+def Reachable (a b : α) : Prop := Nonempty (Walk g a b)
+
+def isConnected : Prop := g.isUndirected ∧ ∀ a b : α, Reachable g a b
+
+def prepend_walk {a b c : α} (x : Edge g a b) (w : Walk g b c) : Walk g a c :=
+  match w with
+  | .nil => Walk.cons Walk.nil x
+  | .cons w edge => Walk.cons (prepend_walk x w) edge
+
+def reverse_edge {a b : α}
+    {h_undirected : g.isUndirected}
+    (edge : Edge g a b) :
+    Edge g b a := by
+  dsimp [Edge] at ⊢ edge
+  rw [h_undirected b a]
+  exact edge
+
+def reverse_walk {a b : α}
+    {h_undirected : g.isUndirected}
+    (w : Walk g a b) :
+    Walk g b a :=
+  match w with
+  | .nil => Walk.nil
+  | .cons (b := b) (c := c) w edge =>
+    let edge' : Edge g c b := reverse_edge g (h_undirected := h_undirected) edge
+    prepend_walk g edge' (reverse_walk (h_undirected := h_undirected) w)
+
+theorem isConnected_of_isUndirected [LinearOrder α]
+    (h_undirected : g.isUndirected)
+    (h : (∀ a b : α, a < b → Reachable g a b)) :
+    g.isConnected := by
+  refine ⟨ h_undirected, ?_ ⟩
+  intros a b
+  rcases lt_trichotomy a b with a_lt_b | a_eq_b | a_gt_b
+  · apply h; assumption
+  · rw [a_eq_b]
+    use Walk.nil
+  · rcases h b a (by lia) with ⟨ walk ⟩
+    use reverse_walk g (h_undirected := h_undirected) walk
+
+end Graph
+
+section
+
+def g : Graph (Fin 2) := Graph.empty.addVertex.addVertex |>.addEdge 1 0 |>.addEdge 0 1
+
+example : g.isConnected := by
+  apply Graph.isConnected_of_isUndirected
+  · show ∀ a b : Fin 2, g.edges a b = g.edges b a
+    rintro ⟨ _ | _ | a, ha ⟩ ⟨ _ | _ | b, hb ⟩ <;> try lia
+    all_goals simp [g]
+  · rintro ⟨ _ | _ | a, ha ⟩ ⟨ _ | _ | b, hb ⟩ _ <;> try lia
+    use Walk.cons (b := 0) ?_ ?_
+    · use Walk.nil
+    · use 0; simp [g]
+
+end
