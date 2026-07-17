@@ -1,12 +1,10 @@
-/- This definition was taken from graphlib -/
-
-import Cslib.Algorithms.Lean.TimeM
 import Mathlib.Logic.Relation
 import Batteries.Data.Array.Scan
 import Mathlib.Order.Defs.LinearOrder
 import Mathlib.Order.Fin.Basic
 import Mathlib.Algebra.Group.Even
 import Mathlib.Algebra.Group.Nat.Even
+import Mathlib.Data.Fintype.Basic
 
 instance : AddZero ℕ where
 
@@ -22,7 +20,7 @@ def Graph.toList {n : Nat} (g : Graph (Fin n)) : List (Fin n × Fin n × Nat) :=
       let edgeCount := g.edges u v
       List.ofFn (fun i : Fin edgeCount => (u, v, i.val))
 
-instance : Repr (Graph (Fin n)) where
+instance{n} : Repr (Graph (Fin n)) where
   reprPrec := reprPrec ∘ Graph.toList
 
 -- todo: remove simp in the future
@@ -67,6 +65,16 @@ def isCycle {a : α} (w : Walk g a a) : Bool :=
   | .nil => true
   | _ => false
 
+def prepend {a b c : α} (x : Edge g a b) (w : Walk g b c) : Walk g a c :=
+  match w with
+  | .nil => Walk.cons Walk.nil x
+  | .cons w edge => Walk.cons (prepend x w) edge
+
+def concat {a b c : α} (w0 : Walk g a b) (w1 : Walk g b c) : Walk g a c :=
+  match w1 with
+  | .nil => w0
+  | .cons w1 edge => Walk.cons (concat w0 w1) edge
+
 end Walk
 
 @[ext]
@@ -84,7 +92,7 @@ def isLoopless : Prop :=
   ∀ a : α, g.edges a a = 0
 
 def isMultiless : Prop :=
-  ∀ a b : α, g.edges a b < 0
+  ∀ a b : α, g.edges a b ≤ 1
 
 def isSimple : Prop :=
   g.isLoopless ∧ g.isMultiless
@@ -95,12 +103,7 @@ def isUndirected : Prop :=
 @[simp, grind]
 def Reachable (a b : α) : Prop := Nonempty (Walk g a b)
 
-def isConnected : Prop := g.isUndirected ∧ ∀ a b : α, Reachable g a b
-
-def prepend_walk {a b c : α} (x : Edge g a b) (w : Walk g b c) : Walk g a c :=
-  match w with
-  | .nil => Walk.cons Walk.nil x
-  | .cons w edge => Walk.cons (prepend_walk x w) edge
+def isConnected : Prop := ∀ a b : α, Reachable g a b
 
 def reverse_edge {a b : α}
     {h_undirected : g.isUndirected}
@@ -118,13 +121,12 @@ def reverse_walk {a b : α}
   | .nil => Walk.nil
   | .cons (b := b) (c := c) w edge =>
     let edge' : Edge g c b := reverse_edge g (h_undirected := h_undirected) edge
-    prepend_walk g edge' (reverse_walk (h_undirected := h_undirected) w)
+    Walk.prepend edge' (reverse_walk (h_undirected := h_undirected) w)
 
 theorem isConnected_of_isUndirected [LinearOrder α]
     (h_undirected : g.isUndirected)
     (h : (∀ a b : α, a < b → Reachable g a b)) :
     g.isConnected := by
-  refine ⟨ h_undirected, ?_ ⟩
   intros a b
   rcases lt_trichotomy a b with a_lt_b | a_eq_b | a_gt_b
   · apply h; assumption
@@ -195,7 +197,63 @@ def Distance (a b : α) (n : ℕ) := ∃ w : Walk g a b, w.vertices.length = n �
 
 def isTree : Prop := g.isSimple ∧ g.isUndirected ∧ g.isUndirectedAcyclic ∧ g.isConnected
 
+/- only makes sense with undirected graphs -/
+def Leaf (leaf neighbor : α) := ∀ a : α, a ≠ leaf → a ≠ neighbor → g.edges leaf a = 0
+
 end Graph
+
+def Graph.removeLeaf {n} (g : Graph (Fin n)) (leaf : Fin n) : Graph (Fin (n - 1)) where
+  edges a b := match a, b with
+    | ⟨a, ha⟩, ⟨b, hb⟩ =>
+      if h : a < leaf ∨ b < leaf
+      then g.edges ⟨a, by lia⟩ ⟨b, by lia⟩
+      else g.edges ⟨a + 1, by lia⟩ ⟨b + 1, by lia⟩
+
+def Graph.addLeaf {n} (g : Graph (Fin n)) (neighbor : Fin n) : Graph (Fin (n + 1)) where
+  edges a b := match a, b with
+    | ⟨a, ha⟩, ⟨b, hb⟩ =>
+      if h : a = n ∨ b = n
+      then if h2 : a = neighbor ∨ b = neighbor then 1 else 0
+      else g.edges ⟨a, by lia⟩ ⟨b, by lia⟩
+
+def walk_of_addLeaf {n} (g : Graph (Fin n)) neighbor (a b : Fin n) (w : Walk g a b) :
+    Walk (g.addLeaf neighbor) ⟨a, by lia⟩ ⟨b, by lia⟩ :=
+  match w with
+  | .nil => Walk.nil
+  | .cons (b := b) (c := c) w edge =>
+    Walk.cons (walk_of_addLeaf g neighbor (w := w))
+      ⟨edge.val, by simp [Graph.addLeaf]; lia⟩
+
+theorem Graph.isTree_of_singleton :
+    Graph.empty.addVertex.isTree := by
+  simp [Graph.isTree, Graph.isSimple, Graph.isLoopless, Graph.isMultiless, Graph.isUndirected, Graph.isUndirectedAcyclic, Graph.isConnected]
+  constructor
+  · rintro ⟨_, _⟩ ⟨_, _⟩; grind
+  · use Walk.nil
+
+theorem Graph.isTree_of_addLeaf {n} (g : Graph (Fin n)) neighbor :
+    g.isTree → (g.addLeaf neighbor).isTree := by
+  dsimp [Graph.isTree]
+  intros h_istree
+  have h_undirected : (g.addLeaf neighbor).isUndirected := by
+    simp [Graph.addLeaf, Graph.isUndirected] at ⊢ h_istree; grind
+  refine ⟨ ⟨ ?_, ?_⟩, h_undirected, ?_, ?_⟩
+  · simp [Graph.addLeaf, Graph.isSimple, Graph.isLoopless] at ⊢ h_istree; grind
+  · simp [Graph.addLeaf, Graph.isSimple, Graph.isMultiless] at ⊢ h_istree; grind
+  · simp [Graph.isUndirectedAcyclic] at ⊢ h_istree
+    -- i have no tools for proving acyclicity yet
+    sorry
+  · apply isConnected_of_isUndirected _ h_undirected
+    simp [Graph.isConnected] at ⊢ h_istree
+    have h_connected : ∀ (a b : Fin n), Nonempty (Walk g a b) := by tauto
+    intros a b a_le_b
+    by_cases! h : b < n
+    · rcases h_connected ⟨a, by lia⟩ ⟨b, by lia⟩ with ⟨walk⟩
+      use walk_of_addLeaf (w := walk) ..
+    have b_eq_n : b = n := by lia
+    have edge : Edge (g.addLeaf neighbor) ⟨neighbor, by lia⟩ b := ⟨0, by grind [Graph.addLeaf]⟩
+    rcases h_connected ⟨a, by lia⟩ neighbor with ⟨walk⟩
+    use Walk.cons (walk_of_addLeaf g neighbor (w := walk)) edge
 
 -- very useless
 
