@@ -5,6 +5,7 @@ import Mathlib.Order.Fin.Basic
 import Mathlib.Algebra.Group.Even
 import Mathlib.Algebra.Group.Nat.Even
 import Mathlib.Data.Fintype.Basic
+import Mathlib.GroupTheory.Perm.Basic
 
 instance : AddZero ℕ where
 
@@ -26,7 +27,11 @@ instance{n} : Repr (Graph (Fin n)) where
 -- todo: remove simp in the future
 @[simp]
 def Graph.empty : Graph (Fin 0) where
-  edges a b := by cases a; lia
+  edges a b := by cases a; contradiction
+
+@[simp]
+def Graph.singleton : Graph (Fin 1) where
+  edges _ _ := 0
 
 @[simp]
 def Graph.addVertex {n : ℕ} (g : Graph (Fin n)) : Graph (Fin (n.succ)) where
@@ -39,6 +44,13 @@ def Graph.addVertex {n : ℕ} (g : Graph (Fin n)) : Graph (Fin (n.succ)) where
 def Graph.addEdge {n : ℕ} (g : Graph (Fin n)) (a b : Fin n) : Graph (Fin n) where
   edges a' b' :=
     if _ : a = a' && b = b'
+    then g.edges a' b' + 1
+    else g.edges a' b'
+
+@[simp]
+def Graph.addSymmEdge {n : ℕ} (g : Graph (Fin n)) (a b : Fin n) : Graph (Fin n) where
+  edges a' b' :=
+    if (a = a' ∧ b = b') ∨ (a = b' ∧ b = a')
     then g.edges a' b' + 1
     else g.edges a' b'
 
@@ -225,7 +237,7 @@ def walk_of_addLeaf {n} (g : Graph (Fin n)) neighbor (a b : Fin n) (w : Walk g a
       ⟨edge.val, by simp [Graph.addLeaf]; lia⟩
 
 theorem Graph.isTree_of_singleton :
-    Graph.empty.addVertex.isTree := by
+    Graph.singleton.isTree := by
   simp [Graph.isTree, Graph.isSimple, Graph.isLoopless, Graph.isMultiless, Graph.isUndirected, Graph.isUndirectedAcyclic, Graph.isConnected]
   constructor
   · rintro ⟨_, _⟩ ⟨_, _⟩; grind
@@ -254,6 +266,9 @@ theorem Graph.isTree_of_addLeaf {n} (g : Graph (Fin n)) neighbor :
     have edge : Edge (g.addLeaf neighbor) ⟨neighbor, by lia⟩ b := ⟨0, by grind [Graph.addLeaf]⟩
     rcases h_connected ⟨a, by lia⟩ neighbor with ⟨walk⟩
     use Walk.cons (walk_of_addLeaf g neighbor (w := walk)) edge
+
+def Graph.shuffle {α β} (g : Graph α) (ρ : Equiv α β) : Graph β where
+  edges a b := g.edges (ρ.symm a) (ρ.symm b)
 
 -- very useless
 
@@ -285,6 +300,93 @@ theorem Graph.union_split {n ma mb : ℕ} {h : n = ma + mb} (g : Graph (Fin n))
       by rw [h]; exact Graph.union a b := by
   cases g with | mk edges =>
   subst h; simp [Graph.split, Graph.union]
+  grind
+
+def Graph.connectUnion {na nb : ℕ} (ga : Graph (Fin na)) (gb : Graph (Fin nb)) (a : Fin na) (b : Fin nb) : Graph (Fin (na + nb)) :=
+  ga.union gb |>.addSymmEdge ⟨a, by lia⟩ ⟨na + b, by lia⟩
+
+theorem Graph.isUndirected_of_connectUnion{na nb : ℕ} (ga : Graph (Fin na)) (gb : Graph (Fin nb)) a b:
+    ga.isUndirected → gb.isUndirected →
+    Graph.isUndirected (Graph.connectUnion ga gb a b) := by
+  simp [Graph.isUndirected, Graph.connectUnion, Graph.union]
+  grind
+
+def Graph.walk_of_union_l {na nb : ℕ} (ga : Graph (Fin na)) (gb : Graph (Fin nb)) {a b}
+    (w : Walk ga a b) :
+    Walk (ga.union gb) ⟨a, by lia⟩ ⟨b, by lia⟩ :=
+  match w with
+  | .nil => Walk.nil
+  | .cons w edge => Walk.cons (Graph.walk_of_union_l ga gb w) ⟨edge.1, by simp [Graph.union]⟩
+
+def Graph.walk_of_union_r {na nb : ℕ} (ga : Graph (Fin na)) (gb : Graph (Fin nb)) {a b}
+    (w : Walk gb a b) :
+    Walk (ga.union gb) ⟨na + a, by lia⟩ ⟨na + b, by lia⟩ :=
+  match w with
+  | .nil => Walk.nil
+  | .cons w edge => Walk.cons (Graph.walk_of_union_r ga gb w) ⟨edge.1, by grind [Graph.union]⟩
+
+def Graph.walk_of_addSymmEdge {n : ℕ} (g : Graph (Fin n)) {a b} {va vb}
+    (w : Walk g a b) :
+    Walk (g.addSymmEdge va vb) a b :=
+  match w with
+  | .nil => Walk.nil
+  | .cons w edge => Walk.cons (Graph.walk_of_addSymmEdge g w) ⟨edge.1, by grind [Graph.addSymmEdge]⟩
+
+def Graph.walk_of_connectUnion_l {na nb : ℕ} (ga : Graph (Fin na)) (gb : Graph (Fin nb)) {a b} {va vb}
+    (w : Walk ga a b) :
+    Walk (Graph.connectUnion ga gb va vb) ⟨a, by lia⟩ ⟨b, by lia⟩ := by
+  dsimp only [Graph.connectUnion]
+  apply walk_of_addSymmEdge
+  apply walk_of_union_l
+  exact w
+
+def Graph.walk_of_connectUnion_r {na nb : ℕ} (ga : Graph (Fin na)) (gb : Graph (Fin nb)) {a b} {va vb}
+    (w : Walk gb a b) :
+    Walk (Graph.connectUnion ga gb va vb) ⟨na + a, by lia⟩ ⟨na + b, by lia⟩ := by
+  dsimp only [Graph.connectUnion]
+  apply walk_of_addSymmEdge
+  apply walk_of_union_r
+  exact w
+
+theorem Graph.isConnected_of_connectUnion {na nb : ℕ} (ga : Graph (Fin na)) (gb : Graph (Fin nb)) a b:
+    ga.isUndirected → ga.isConnected →
+    gb.isUndirected → gb.isConnected →
+    Graph.isConnected (Graph.connectUnion ga gb a b) := by
+  simp [Graph.isUndirected, Graph.isConnected]
+  intros ga_undirected ga_connected gb_undirected gb_connected
+  apply isConnected_of_isUndirected
+  · apply isUndirected_of_connectUnion <;> assumption
+  intros c d c_le_d; dsimp [Graph.Reachable]
+  have : Walk (Graph.connectUnion ga gb a b) ⟨a, by lia⟩ ⟨na + b, by lia⟩ :=
+    Walk.cons Walk.nil ⟨0, by simp [Graph.connectUnion]⟩
+
+  by_cases d < na
+  · let c : Fin na := ⟨c, by lia⟩
+    let d : Fin na := ⟨d, by lia⟩
+    show Nonempty (Walk (ga.connectUnion gb a b) ⟨c, _⟩ ⟨d, _⟩)
+    rcases ga_connected c d with ⟨walk_c_d⟩
+    use (walk_of_connectUnion_l (w := walk_c_d) ..)
+  by_cases na ≤ c
+  · let c : Fin nb := ⟨c - na, by lia⟩
+    let d : Fin nb := ⟨d - na, by lia⟩
+    suffices Nonempty (Walk (ga.connectUnion gb a b) ⟨na + c, by lia⟩ ⟨na + d, by lia⟩) by grind
+    rcases gb_connected c d with ⟨walk_c_d⟩
+    use (walk_of_connectUnion_r (w := walk_c_d) ..)
+  · let c : Fin na := ⟨c, by lia⟩
+    let d : Fin nb := ⟨d - na, by lia⟩
+    suffices Nonempty (Walk (ga.connectUnion gb a b) ⟨c, by lia⟩ ⟨na + d, by lia⟩) by grind
+    rcases ga_connected c a with ⟨walk_c_a⟩
+    rcases gb_connected b d with ⟨walk_b_d⟩
+    have : Walk (Graph.connectUnion ga gb a b) ⟨a, by lia⟩ ⟨na + b, by lia⟩ :=
+      Walk.nil.cons ⟨0, by simp [Graph.connectUnion]⟩
+    constructor
+    refine Walk.concat (Walk.concat ?_ this) ?_
+    · exact walk_of_connectUnion_l (w := walk_c_a) ..
+    · exact walk_of_connectUnion_r (w := walk_b_d) ..
+
+theorem Graph.addLeaf_is_connectUnion {n} (g : Graph (Fin n)) neighbor :
+    g.addLeaf neighbor = Graph.connectUnion g (Graph.singleton) neighbor 0 := by
+  simp [Graph.addLeaf, Graph.connectUnion, Graph.union, Graph.addSymmEdge, Graph.singleton]
   grind
 
 inductive Tree where
