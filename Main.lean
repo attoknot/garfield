@@ -1,31 +1,35 @@
 import Garfield
 
-open Graph
 
-@[simp]
-def g : Graph Unit Unit :=
-  let (g, v0) := Graph.empty.addVertex ()
-  let (g, v1) := g.addVertex ()
-  let (g, v2) := g.addVertex ()
-  g |>.addEdge v0 v1 ()
-    |>.addEdge v1 v2 ()
-    |>.addEdge v1 v0 ()
+section
 
-@[grind =]
-theorem g_vertices_size : g.vertices.size = 3 := rfl
+def g : Graph (Fin 2) := Graph.empty.addVertex.addVertex
+  |>.addEdge 1 0
+  |>.addEdge 0 1
 
-#eval g.vertices
-#eval (findEdgeRel g 0 1 (by grind) (by simp [Graph.empty, Graph.addVertex, findEdge]; rfl))
-#eval (findEdgeRel g 1 0 (by grind))
-#eval (findEdgeRel g 1 2 (by grind))
+example : g.isConnected := by
+  apply Graph.isConnected_of_isUndirected
+  · show ∀ a b : Fin 2, g.edges a b = g.edges b a
+    rintro ⟨ _ | _ | a, ha ⟩ ⟨ _ | _ | b, hb ⟩ <;> try lia
+    all_goals simp [g]
+  · rintro ⟨ _ | _ | a, ha ⟩ ⟨ _ | _ | b, hb ⟩ _ <;> try lia
+    use Walk.cons (b := 0) ?_ ?_
+    · use Walk.nil
+    · use 0; simp [g]
 
-def edge01 : g.EdgeRel 0 1 := match findEdgeRel g 0 1 (h_a := by grind) with
-  | some x => x
-  | none => unreachable!
-  
-  
+example : g.Distance 0 1 1 := by
+  dsimp [Graph.Distance, Graph.Shortest]
+  let w : Walk g 0 1 := Walk.cons (b := 0) Walk.nil ⟨0, by simp [g]⟩
+  use w
+  constructor
+  · simp [w, Walk.vertices]
+  intros w'
+  cases w' with
+  | cons w' edge => cases w' with
+    | cons w' edge2 => simp [w, Walk.vertices]
+    | nil => rfl
 
-#eval (Walk.step (g.findEdgeRel 0 1 _ _) g.findEdgeRel 0 1 : g.Walk 0 0)
+end
 
 def main : IO Unit :=
   IO.println s!"Hello, world!"
